@@ -1,0 +1,10 @@
+[build]
+dockerfilePath = "Dockerfile"
+dockerTarget = "development"
+
+[deploy]
+startCommand = "pnpm run dev --host --port 5173"
+healthcheckPath = "/"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
