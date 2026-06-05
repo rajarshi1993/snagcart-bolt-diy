@@ -9,11 +9,11 @@ ENV CI=true
 # Use pnpm
 RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 
-# Ensure git is available for build and runtime scripts
+# Ensure git is available for build scripts
 RUN apt-get update && apt-get install -y --no-install-recommends git \
   && rm -rf /var/lib/apt/lists/*
 
-# Accept (optional) build-time public URL for Remix/Vite (Coolify can pass it)
+# Accept (optional) build-time public URL for Remix/Vite
 ARG VITE_PUBLIC_APP_URL
 ENV VITE_PUBLIC_APP_URL=${VITE_PUBLIC_APP_URL}
 
@@ -23,74 +23,48 @@ RUN pnpm fetch
 
 # Copy source and build
 COPY . .
-# install with dev deps (needed to build)
 RUN pnpm install --offline --frozen-lockfile
 
-# Build the Remix app (SSR + client)
+# Build the Remix app (SSR + client bundles)
 RUN NODE_OPTIONS=--max-old-space-size=4096 pnpm run build
-
-# ---- production dependencies stage ----
-FROM build AS prod-deps
-
-# Keep only production deps for runtime
-RUN pnpm prune --prod --ignore-scripts
 
 
 # ---- production stage ----
-FROM prod-deps AS bolt-ai-production
+FROM node:22-bookworm-slim AS bolt-ai-production
 WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=5173
-ENV HOST=0.0.0.0
 
-# Non-sensitive build arguments
-ARG VITE_LOG_LEVEL=debug
-ARG DEFAULT_NUM_CTX
-
-# Set non-sensitive environment variables
-ENV WRANGLER_SEND_METRICS=false \
-    VITE_LOG_LEVEL=${VITE_LOG_LEVEL} \
-    DEFAULT_NUM_CTX=${DEFAULT_NUM_CTX} \
-    RUNNING_IN_DOCKER=true
-
-# Note: API keys should be provided at runtime via docker run -e or docker-compose
-# Example: docker run -e OPENAI_API_KEY=your_key_here ...
-
-# Install curl for healthchecks
+# Install curl for healthchecks + express for the server
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
   && rm -rf /var/lib/apt/lists/*
 
-# Pre-configure wrangler to disable metrics
-RUN mkdir -p /root/.config/.wrangler && \
-    echo '{"enabled":false}' > /root/.config/.wrangler/metrics.json
+# Install only express (the one runtime dependency for our server)
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
+COPY package.json ./
+RUN pnpm add express
 
-# Make bindings script executable
-RUN chmod +x /app/bindings.sh
+# Copy the client build output and server
+COPY --from=build /app/build/client ./build/client
+COPY server.js ./
 
 EXPOSE 5173
 
-# Healthcheck for deployment platforms
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
   CMD curl -fsS http://localhost:5173/ || exit 1
 
-# Start using dockerstart script with Wrangler pages dev
-CMD ["pnpm", "run", "dockerstart"]
+CMD ["node", "server.js"]
 
 
 # ---- development stage ----
 FROM build AS development
 
-# Non-sensitive development arguments
 ARG VITE_LOG_LEVEL=debug
 ARG DEFAULT_NUM_CTX
-
-# Set non-sensitive environment variables for development
 ENV VITE_LOG_LEVEL=${VITE_LOG_LEVEL} \
     DEFAULT_NUM_CTX=${DEFAULT_NUM_CTX} \
     RUNNING_IN_DOCKER=true
 
-# Note: API keys should be provided at runtime via docker run -e or docker-compose
-# Example: docker run -e OPENAI_API_KEY=your_key_here ...
 RUN mkdir -p /app/run
 CMD ["pnpm", "run", "dev", "--host"]
