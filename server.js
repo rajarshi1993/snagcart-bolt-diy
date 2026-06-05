@@ -2,18 +2,23 @@
  * Production Express server for bolt-diy on Railway.
  * Uses @remix-run/express to serve the Remix app.
  * Bridges process.env into context.cloudflare.env so API keys work via Railway env vars.
+ *
+ * NOTE: This file uses ESM because package.json has "type": "module".
  */
-const path = require('path');
-const express = require('express');
-const { createRequestHandler } = require('@remix-run/express');
-const { installGlobals } = require('@remix-run/node');
+import path from 'path';
+import { fileURLToPath } from 'url';
+import express from 'express';
+import { createRequestHandler } from '@remix-run/express';
+import { installGlobals } from '@remix-run/node';
 
 // Install Node.js globals (fetch, FormData, etc.) needed by Remix
 installGlobals();
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const app = express();
 const PORT = process.env.PORT || 5173;
-const BUILD_PATH = path.join(__dirname, 'build/server/index.js');
 const CLIENT_BUILD_PATH = path.join(__dirname, 'build/client');
 
 // Serve static assets from the client build with long-term caching
@@ -53,11 +58,14 @@ function buildCloudflareEnv() {
   };
 }
 
+// Dynamically import the server build (ESM)
+const build = await import('./build/server/index.js');
+
 // Handle all requests through Remix
 app.all(
   '*',
   createRequestHandler({
-    build: require(BUILD_PATH),
+    build,
     mode: process.env.NODE_ENV || 'production',
     getLoadContext(_req, _res) {
       return {
