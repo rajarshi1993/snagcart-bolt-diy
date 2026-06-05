@@ -30,31 +30,35 @@ RUN NODE_OPTIONS=--max-old-space-size=4096 pnpm run build
 
 
 # ---- production stage ----
-FROM node:22-bookworm-slim AS bolt-ai-production
+# Based on the build stage so we keep the full dependency tree (incl. wrangler),
+# the compiled Remix server build, the Cloudflare Pages functions, bindings.sh
+# and wrangler.toml. bolt.diy's entry.server targets the Cloudflare/workerd
+# runtime (renderToReadableStream), so it must be served via `wrangler pages dev`
+# — a plain Node server cannot execute the SSR build.
+FROM build AS bolt-ai-production
 WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=5173
+ENV HOST=0.0.0.0
+ENV WRANGLER_SEND_METRICS=false
+ENV RUNNING_IN_DOCKER=true
 
-# Install curl for healthchecks + express for the server
+# curl for healthchecks
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
   && rm -rf /var/lib/apt/lists/*
 
-# Install only express (the one runtime dependency for our server)
-RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
-COPY package.json ./
-RUN pnpm add express
-
-# Copy the client build output and server
-COPY --from=build /app/build/client ./build/client
-COPY server.js ./
+# Disable wrangler telemetry prompt and make the bindings script executable
+RUN mkdir -p /root/.config/.wrangler \
+  && echo '{"enabled":false}' > /root/.config/.wrangler/metrics.json \
+  && chmod +x /app/bindings.sh
 
 EXPOSE 5173
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-  CMD curl -fsS http://localhost:5173/ || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=5 \
+  CMD curl -fsS "http://localhost:${PORT:-5173}/" || exit 1
 
-CMD ["node", "server.js"]
+CMD ["pnpm", "run", "dockerstart"]
 
 
 # ---- development stage ----
