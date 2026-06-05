@@ -296,10 +296,16 @@ export const Menu = () => {
       }
     }
 
+    function onToggleSidebar() {
+      setOpen((prev) => !prev);
+    }
+
     window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('toggle-sidebar', onToggleSidebar);
 
     return () => {
       window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('toggle-sidebar', onToggleSidebar);
     };
   }, [isSettingsOpen]);
 

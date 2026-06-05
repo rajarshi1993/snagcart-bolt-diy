@@ -27,7 +27,12 @@ export function Header() {
           </svg>
           <span className="hidden sm:inline">Dashboard</span>
         </a>
-        <div className="i-ph:sidebar-simple-duotone text-xl" />
+        <button
+          className="i-ph:sidebar-simple-duotone text-xl hover:text-bolt-elements-textPrimary text-bolt-elements-textSecondary transition-colors"
+          onClick={() => window.dispatchEvent(new CustomEvent('toggle-sidebar'))}
+          title="Toggle chat history"
+          aria-label="Toggle sidebar"
+        />
         <a href="/" className="flex items-center gap-2" aria-label="Snagcart">
           <span
             className="w-8 h-8 rounded-lg flex items-center justify-center shadow-lg shadow-orange-500/20 shrink-0"
