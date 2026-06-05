@@ -37,8 +37,11 @@ RUN pnpm prune --prod --ignore-scripts
 
 
 # ---- production stage ----
-FROM prod-deps AS bolt-ai-production
+FROM node:22-bookworm-slim AS bolt-ai-production
 WORKDIR /app
+
+# Use pnpm
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 
 ENV NODE_ENV=production
 ENV PORT=5173
@@ -57,15 +60,20 @@ ENV WRANGLER_SEND_METRICS=false \
 # Note: API keys should be provided at runtime via docker run -e or docker-compose
 # Example: docker run -e OPENAI_API_KEY=your_key_here ...
 
-# Install curl for healthchecks and copy bindings script
+# Install curl for healthchecks
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
   && rm -rf /var/lib/apt/lists/*
 
-# Copy built files and scripts
+# Copy built files, scripts, and all runtime-needed files
 COPY --from=prod-deps /app/build /app/build
 COPY --from=prod-deps /app/node_modules /app/node_modules
 COPY --from=prod-deps /app/package.json /app/package.json
+COPY --from=prod-deps /app/pnpm-lock.yaml /app/pnpm-lock.yaml
 COPY --from=prod-deps /app/bindings.sh /app/bindings.sh
+COPY --from=prod-deps /app/server.js /app/server.js
+COPY --from=prod-deps /app/wrangler.toml /app/wrangler.toml
+COPY --from=prod-deps /app/functions /app/functions
+COPY --from=prod-deps /app/worker-configuration.d.ts /app/worker-configuration.d.ts
 
 # Pre-configure wrangler to disable metrics
 RUN mkdir -p /root/.config/.wrangler && \
@@ -77,11 +85,11 @@ RUN chmod +x /app/bindings.sh
 EXPOSE 5173
 
 # Healthcheck for deployment platforms
-HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=5 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
   CMD curl -fsS http://localhost:5173/ || exit 1
 
-# Start using dockerstart script with Wrangler
-CMD ["pnpm", "run", "dockerstart"]
+# Start using wrangler pages dev (the correct runtime for Cloudflare Pages apps)
+CMD ["sh", "-c", "bindings=$(./bindings.sh 2>/dev/null || echo '') && npx wrangler pages dev ./build/client --port 5173 --ip 0.0.0.0 $bindings"]
 
 
 # ---- development stage ----
