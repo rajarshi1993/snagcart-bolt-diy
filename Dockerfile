@@ -29,6 +29,14 @@ RUN pnpm install --offline --frozen-lockfile
 # Build the Remix app (SSR + client)
 RUN NODE_OPTIONS=--max-old-space-size=4096 pnpm run build
 
+# Pre-compile the Cloudflare Pages functions into a single _worker.js
+# This avoids runtime compilation issues in Docker (no access to build/server at startup)
+RUN ./node_modules/.bin/wrangler pages functions build \
+    --outdir ./build/client \
+    --compatibility-date 2025-03-28 \
+    --compatibility-flags nodejs_compat \
+    --build-output-directory ./build/client
+
 # ---- production dependencies stage ----
 FROM build AS prod-deps
 
@@ -46,25 +54,24 @@ RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 ENV NODE_ENV=production
 ENV PORT=5173
 ENV HOST=0.0.0.0
+# Disable wrangler metrics and interactive mode for Docker
+ENV WRANGLER_SEND_METRICS=false
+ENV CI=true
 
 # Non-sensitive build arguments
 ARG VITE_LOG_LEVEL=debug
 ARG DEFAULT_NUM_CTX
 
 # Set non-sensitive environment variables
-ENV WRANGLER_SEND_METRICS=false \
-    VITE_LOG_LEVEL=${VITE_LOG_LEVEL} \
+ENV VITE_LOG_LEVEL=${VITE_LOG_LEVEL} \
     DEFAULT_NUM_CTX=${DEFAULT_NUM_CTX} \
     RUNNING_IN_DOCKER=true
-
-# Note: API keys should be provided at runtime via docker run -e or docker-compose
-# Example: docker run -e OPENAI_API_KEY=your_key_here ...
 
 # Install curl for healthchecks
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
   && rm -rf /var/lib/apt/lists/*
 
-# Copy built files, scripts, and all runtime-needed files
+# Copy built files and all runtime-needed files
 COPY --from=prod-deps /app/build /app/build
 COPY --from=prod-deps /app/node_modules /app/node_modules
 COPY --from=prod-deps /app/package.json /app/package.json
@@ -72,7 +79,6 @@ COPY --from=prod-deps /app/pnpm-lock.yaml /app/pnpm-lock.yaml
 COPY --from=prod-deps /app/bindings.sh /app/bindings.sh
 COPY --from=prod-deps /app/server.js /app/server.js
 COPY --from=prod-deps /app/wrangler.toml /app/wrangler.toml
-COPY --from=prod-deps /app/functions /app/functions
 COPY --from=prod-deps /app/worker-configuration.d.ts /app/worker-configuration.d.ts
 
 # Pre-configure wrangler to disable metrics
@@ -85,11 +91,13 @@ RUN chmod +x /app/bindings.sh
 EXPOSE 5173
 
 # Healthcheck for deployment platforms
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=5 \
   CMD curl -fsS http://localhost:5173/ || exit 1
 
-# Start using wrangler pages dev (the correct runtime for Cloudflare Pages apps)
-CMD ["sh", "-c", "bindings=$(./bindings.sh 2>/dev/null || echo '') && npx wrangler pages dev ./build/client --port 5173 --ip 0.0.0.0 $bindings"]
+# Start wrangler pages dev using the pre-compiled _worker.js (no runtime compilation needed)
+# --no-bundle: skip bundling since _worker.js is already compiled
+# --show-interactive-dev-session=false: non-interactive mode for Docker
+CMD ["sh", "-c", "bindings=$(./bindings.sh 2>/dev/null || echo '') && ./node_modules/.bin/wrangler pages dev ./build/client --port 5173 --ip 0.0.0.0 --no-bundle --show-interactive-dev-session=false --log-level=info $bindings"]
 
 
 # ---- development stage ----
@@ -103,9 +111,6 @@ ARG DEFAULT_NUM_CTX
 ENV VITE_LOG_LEVEL=${VITE_LOG_LEVEL} \
     DEFAULT_NUM_CTX=${DEFAULT_NUM_CTX} \
     RUNNING_IN_DOCKER=true
-
-# Note: API keys should be provided at runtime via docker run -e or docker-compose
-# Example: docker run -e OPENAI_API_KEY=your_key_here ...
 
 RUN mkdir -p /app/run
 CMD ["pnpm", "run", "dev", "--host"]
