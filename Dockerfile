@@ -9,8 +9,14 @@ ENV CI=true
 # Use pnpm
 RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 
-# Ensure git is available for build scripts
-RUN apt-get update && apt-get install -y --no-install-recommends git \
+# Ensure git is available for build scripts and ca-certificates are present so
+# workerd's outbound TLS (e.g. fetches to OpenAI from the chat API route) can
+# verify peer certs. node:bookworm-slim ships with NO CA bundle, which makes
+# `wrangler pages dev` fetches fail with "unable to get local issuer
+# certificate". Installed here in the base build stage so every stage inherits
+# /etc/ssl/certs/ca-certificates.crt.
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+  && update-ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
 # Accept (optional) build-time public URL for Remix/Vite
